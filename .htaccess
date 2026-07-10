@@ -1,0 +1,2 @@
+# This app runs from cron only - block all web access.
+Require all denied
