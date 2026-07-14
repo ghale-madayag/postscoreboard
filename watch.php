@@ -487,9 +487,25 @@ try {
         'ssl_options'   => is_file(CA_FILE) ? ['cafile' => CA_FILE] : [],
     ]);
     $client->connect();
+    log_line('INFO', 'IMAP connected: ' . ($client->isConnected() ? 'yes' : 'NO'));
     $folder = $client->getFolder($imapCfg['folder'] ?? 'INBOX');
+    if ($folder === null) {
+        $names = [];
+        try {
+            foreach ($client->getFolders() as $f) {
+                $names[] = (string) $f->full_name;
+            }
+        } catch (Throwable $e) {
+            $names[] = '(listing failed: ' . $e->getMessage() . ')';
+        }
+        log_line('ERROR', sprintf(
+            'IMAP folder "%s" not found. Server offered: %s',
+            $imapCfg['folder'] ?? 'INBOX', implode(', ', $names) ?: '(none)'
+        ));
+        exit(1);
+    }
 } catch (Throwable $e) {
-    log_line('ERROR', 'IMAP connection failed: ' . $e->getMessage());
+    log_line('ERROR', 'IMAP connection failed: ' . get_class($e) . ': ' . $e->getMessage());
     exit(1);
 }
 
