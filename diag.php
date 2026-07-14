@@ -17,6 +17,27 @@ if ($expected === null || !hash_equals($expected, (string) ($_GET['key'] ?? ''))
 
 header('Content-Type: text/plain; charset=utf-8');
 
+if (isset($_GET['skipuids'])) {
+    // Mark comma-separated message UIDs as already processed so the watcher
+    // never posts them (used to clear duplicate test emails from the queue).
+    $stateFile = __DIR__ . '/state/state.json';
+    $state = is_file($stateFile) ? (array) json_decode((string) file_get_contents($stateFile), true) : [];
+    $state += ['uidvalidity' => 1, 'last_uid' => 0, 'processed_uids' => []];
+    $added = [];
+    foreach (explode(',', (string) $_GET['skipuids']) as $uid) {
+        $uid = (int) trim($uid);
+        if ($uid > 0 && !in_array($uid, $state['processed_uids'], true)) {
+            $state['processed_uids'][] = $uid;
+            $state['last_uid'] = max((int) $state['last_uid'], $uid);
+            $added[] = $uid;
+        }
+    }
+    $state['updated_at'] = date('c');
+    file_put_contents($stateFile . '.tmp', json_encode($state, JSON_PRETTY_PRINT));
+    rename($stateFile . '.tmp', $stateFile);
+    echo 'skipuids: added [' . implode(', ', $added) . "], last_uid={$state['last_uid']}\n\n";
+}
+
 if (isset($_GET['fixperms'])) {
     // Repair permissions broken by zip extraction: dirs 0755, files 0644.
     $iterator = new RecursiveIteratorIterator(

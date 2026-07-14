@@ -31,6 +31,7 @@ if (!is_dir(__DIR__ . '/logs')) {
 }
 ini_set('log_errors', '1');
 ini_set('error_log', __DIR__ . '/logs/boot.log');
+ini_set('memory_limit', '512M'); // large photo attachments arrive base64-inflated
 register_shutdown_function(function (): void {
     $e = error_get_last();
     if ($e !== null && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
@@ -169,12 +170,29 @@ function html_to_text(string $html): string
  */
 function clean_body_text(string $text): string
 {
+    // Gmail renders inline images as "[image: name.jpg]" in the text part -
+    // possibly glued to surrounding text and hard-wrapped mid-placeholder,
+    // so remove the spans across line breaks before any line handling.
+    $text = (string) preg_replace('/\[(image|cid):.*?\]/is', '', $text);
+
     $lines = preg_split('/\R/', $text);
     $kept = [];
+    $inForwardHeader = false;
     foreach ($lines as $line) {
         $trimmed = trim($line);
-        // Gmail renders inline images as "[image: name.jpg]" in the text part.
-        if (preg_match('/^\[(image|cid):[^\]]*\]$/i', $trimmed)) {
+        // Forwarded emails: drop the marker and its From/Date/Subject/To block.
+        if (preg_match('/^-{2,}\s*Forwarded message\s*-{2,}$/i', $trimmed)) {
+            $inForwardHeader = true;
+            continue;
+        }
+        if ($inForwardHeader) {
+            if ($trimmed === '' || preg_match('/^(From|Date|Subject|To|Cc):/i', $trimmed)) {
+                continue;
+            }
+            $inForwardHeader = false; // first real content line
+        }
+        // Leftover wrapped placeholder fragments, e.g. a lone "IMG_1234.jpg]".
+        if (preg_match('/^\[?(image|cid):/i', $trimmed) || preg_match('/^\S+\.(jpg|jpeg|png|gif|webp)\]$/i', $trimmed)) {
             continue;
         }
         // Signature delimiters: exact-line greetings ("Best regards,"), the RFC
@@ -207,6 +225,27 @@ function extract_body_text($message): string
 }
 
 /**
+ * Detects the accepted image formats from their leading magic bytes.
+ * (Deliberately not finfo-based: some hosts' CLI PHP lacks ext-fileinfo.)
+ */
+function sniff_image_mime(string $bytes): ?string
+{
+    if (str_starts_with($bytes, "\xFF\xD8\xFF")) {
+        return 'image/jpeg';
+    }
+    if (str_starts_with($bytes, "\x89PNG\r\n\x1a\n")) {
+        return 'image/png';
+    }
+    if (str_starts_with($bytes, 'GIF87a') || str_starts_with($bytes, 'GIF89a')) {
+        return 'image/gif';
+    }
+    if (strlen($bytes) > 12 && str_starts_with($bytes, 'RIFF') && substr($bytes, 8, 4) === 'WEBP') {
+        return 'image/webp';
+    }
+    return null;
+}
+
+/**
  * Saves image attachments (regular and inline) to TMP_DIR.
  *
  * @return array<int, array{path:string,name:string,mime:string,size:int}>
@@ -220,7 +259,6 @@ function extract_images($message, int $uid, array $config): array
         'image/webp' => 'webp',
     ];
     $maxBytes = (int) ($config['max_image_bytes'] ?? 10 * 1024 * 1024);
-    $finfo = new finfo(FILEINFO_MIME_TYPE);
     $images = [];
     $n = 0;
 
@@ -231,8 +269,8 @@ function extract_images($message, int $uid, array $config): array
             continue;
         }
         // Sniff the real type from the bytes; headers lie (application/octet-stream etc).
-        $mime = (string) $finfo->buffer($content);
-        if (!isset($extByMime[$mime])) {
+        $mime = sniff_image_mime($content);
+        if ($mime === null) {
             continue; // not an image we accept
         }
         if (strlen($content) > $maxBytes) {
