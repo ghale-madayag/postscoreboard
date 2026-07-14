@@ -1,9 +1,12 @@
 # PostScoreboard — Gmail "Scoreboard" Watcher
 
 Watches the `abegail@depthlogistics.com` Gmail inbox. When an email arrives whose
-subject contains **"scoreboard"** (case-insensitive, so "RE: Scoreboard" also matches), it:
+subject contains **"scoreboard"** (case-insensitive, so "RE: Scoreboard" also matches),
+sent by an **approved contributor** (the executives returned by
+`/wp-json/user/contributor/`, matched on email address) and containing **at least
+one image** (emails that merely mention scoreboard in a conversation have none), it:
 
-1. Extracts the email body text and any image attachments (including inline/pasted images).
+1. Extracts the email body text and the image attachments (including inline/pasted images).
 2. Checks the 3 intranet sections and finds the one whose **latest post is oldest**:
    - `weekly_challenge`, `depth_at_work_3`, `depth_at_work_2`
    (`what_on_you_mind` was in the rotation originally and was removed 2026-07-10;

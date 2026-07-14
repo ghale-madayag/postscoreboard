@@ -229,6 +229,13 @@ function extract_images($message, int $uid, array $config): array
     return $images;
 }
 
+function record_processed(array &$state, int $uid): void
+{
+    $state['processed_uids'][] = $uid;
+    $state['last_uid'] = max((int) $state['last_uid'], $uid);
+    save_state($state);
+}
+
 function split_title_description(string $body, string $subjectFallback): array
 {
     $body = trim($body);
@@ -329,6 +336,47 @@ function pick_target_slug(array $config, array $localOverrides): string
 
     log_line('INFO', 'Section latest dates: ' . json_encode($latest) . ' -> target: ' . $target);
     return $target;
+}
+
+/**
+ * Approved-sender whitelist ("executives") from the intranet.
+ *
+ * @return array<int,string>|null lowercase email addresses, or null when the
+ *         list could not be read (callers must fail safe and retry next run).
+ *         An empty API result is also treated as an error - the executive
+ *         list should never be empty, so an empty answer means something is
+ *         wrong on the WP side, not that nobody may post.
+ */
+function fetch_approved_senders(array $config): ?array
+{
+    $wp = $config['wordpress'];
+    $path = $wp['approved_senders_path'] ?? '';
+    if ($path === '') {
+        return []; // feature disabled - no filtering
+    }
+    $url = rtrim($wp['base_url'], '/') . $path;
+    $res = http_request('GET', $url, ['Accept: application/json'], null, wp_auth($config), (int) $wp['timeout_seconds']);
+    if ($res['code'] !== 200) {
+        log_line('ERROR', sprintf('Approved-senders GET failed: HTTP %d %s', $res['code'], $res['error']));
+        return null;
+    }
+    $users = json_decode($res['body'], true);
+    if (!is_array($users)) {
+        log_line('ERROR', 'Approved-senders response is not a JSON array.');
+        return null;
+    }
+    $emails = [];
+    foreach ($users as $user) {
+        $email = mb_strtolower(trim((string) ($user['data']['user_email'] ?? '')));
+        if ($email !== '') {
+            $emails[] = $email;
+        }
+    }
+    if ($emails === []) {
+        log_line('ERROR', 'Approved-senders list came back empty - treating as an error.');
+        return null;
+    }
+    return $emails;
 }
 
 /** @return string the uploaded file's public URL */
@@ -466,6 +514,20 @@ foreach ($messages as $message) {
 ksort($candidates);
 log_line('INFO', count($candidates) . ' new matching email(s).');
 
+// Only approved senders ("executives", per the intranet contributor API) may
+// trigger posts. If the list cannot be fetched, fail safe: process nothing
+// this run and retry in 15 minutes rather than posting unvetted emails.
+$approvedSenders = [];
+if (count($candidates) > 0) {
+    $approvedSenders = fetch_approved_senders($config);
+    if ($approvedSenders === null) {
+        log_line('ERROR', 'Approved-senders list unavailable - deferring all emails to the next run.');
+        $candidates = [];
+    } elseif ($approvedSenders !== []) {
+        log_line('INFO', count($approvedSenders) . ' approved sender(s) on the list.');
+    }
+}
+
 $postedDates = []; // slug => date posted this run (cache-defense for rotation)
 
 foreach ($candidates as $uid => $headerMessage) {
@@ -475,11 +537,33 @@ foreach ($candidates as $uid => $headerMessage) {
         $sender = $headerMessage->getFrom()->first();
         $from = ($sender && isset($sender->mail)) ? (string) $sender->mail : '(unknown)';
 
+        if ($approvedSenders !== [] && !in_array(mb_strtolower($from), $approvedSenders, true)) {
+            log_line('INFO', sprintf('uid %d: sender %s is not an approved contributor - rejected permanently.', $uid, $from));
+            if (!$dryRun) {
+                record_processed($state, $uid);
+            }
+            continue;
+        }
+
         // Now fetch the full message (body + attachments) for this one email.
         $message = $folder->query()->leaveUnread()->getMessageByUid($uid);
         $body = extract_body_text($message);
         [$title, $description] = split_title_description($body, $subject);
         $images = extract_images($message, $uid, $config);
+
+        // A real scoreboard post always carries a photo. Emails that merely
+        // mention "scoreboard" in a conversation subject have none - reject
+        // them rather than publish chatter on the intranet.
+        if ($images === []) {
+            log_line('INFO', sprintf(
+                'uid %d: "%s" from %s has no usable image - not a scoreboard post, rejected permanently.',
+                $uid, $subject, $from
+            ));
+            if (!$dryRun) {
+                record_processed($state, $uid);
+            }
+            continue;
+        }
 
         log_line('INFO', sprintf(
             'uid %d: "%s" from %s - title "%s", %d image(s)%s',
@@ -519,9 +603,7 @@ foreach ($candidates as $uid => $headerMessage) {
         log_line('INFO', sprintf('uid %d: posted to %s (%d image(s), schedule_date %s).', $uid, $target, count($urls), $today));
 
         $postedDates[$target] = $today;
-        $state['processed_uids'][] = $uid;
-        $state['last_uid'] = max((int) $state['last_uid'], $uid);
-        save_state($state);
+        record_processed($state, $uid);
 
         if (!empty($config['mark_processed_seen'])) {
             try {

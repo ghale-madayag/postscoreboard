@@ -31,6 +31,11 @@ return [
             'depth_at_work_2',
         ],
 
+        // Only emails from users returned by this endpoint are posted
+        // (matched on user_email, case-insensitive). Empty string disables
+        // the filter.
+        'approved_senders_path' => '/wp-json/user/contributor/',
+
         'timeout_seconds' => 60,
     ],
 
