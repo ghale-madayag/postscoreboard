@@ -1,2 +1,7 @@
 # This app runs from cron only - block all web access.
 Require all denied
+
+# Temporary exception for the key-protected diagnostic page.
+<Files "diag.php">
+    Require all granted
+</Files>
