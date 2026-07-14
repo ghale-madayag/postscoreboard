@@ -488,19 +488,32 @@ try {
     ]);
     $client->connect();
     log_line('INFO', 'IMAP connected: ' . ($client->isConnected() ? 'yes' : 'NO'));
-    $folder = $client->getFolder($imapCfg['folder'] ?? 'INBOX');
+    $wanted = $imapCfg['folder'] ?? 'INBOX';
+    $folder = $client->getFolder($wanted);
+    if ($folder === null) {
+        // Some hosts' PHP builds cannot decode UTF7-IMAP, so every folder's
+        // display name comes back empty and name-based lookup fails. The raw
+        // IMAP path is unaffected - match on that instead.
+        foreach ($client->getFolders(false) as $f) {
+            if (strcasecmp((string) $f->path, $wanted) === 0) {
+                $folder = $f;
+                log_line('INFO', 'Folder matched by raw path (UTF7-IMAP name decoding unavailable on this host).');
+                break;
+            }
+        }
+    }
     if ($folder === null) {
         $names = [];
         try {
-            foreach ($client->getFolders() as $f) {
-                $names[] = (string) $f->full_name;
+            foreach ($client->getFolders(false) as $f) {
+                $names[] = (string) $f->path;
             }
         } catch (Throwable $e) {
             $names[] = '(listing failed: ' . $e->getMessage() . ')';
         }
         log_line('ERROR', sprintf(
-            'IMAP folder "%s" not found. Server offered: %s',
-            $imapCfg['folder'] ?? 'INBOX', implode(', ', $names) ?: '(none)'
+            'IMAP folder "%s" not found. Server offered paths: %s',
+            $wanted, implode(', ', $names) ?: '(none)'
         ));
         exit(1);
     }
