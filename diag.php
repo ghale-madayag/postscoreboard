@@ -17,6 +17,27 @@ if ($expected === null || !hash_equals($expected, (string) ($_GET['key'] ?? ''))
 
 header('Content-Type: text/plain; charset=utf-8');
 
+if (isset($_GET['fixperms'])) {
+    // Repair permissions broken by zip extraction: dirs 0755, files 0644.
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator(__DIR__, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    $dirs = $files = $errors = 0;
+    @chmod(__DIR__, 0755);
+    foreach ($iterator as $path => $info) {
+        if (str_contains(str_replace('\\', '/', (string) $path), '/.git/')) {
+            continue;
+        }
+        if ($info->isDir()) {
+            @chmod($path, 0755) ? $dirs++ : $errors++;
+        } else {
+            @chmod($path, 0644) ? $files++ : $errors++;
+        }
+    }
+    echo "fixperms done: dirs=$dirs files=$files errors=$errors\n\n";
+}
+
 echo "PHP (web): " . PHP_VERSION . " sapi=" . PHP_SAPI . "\n";
 foreach (['curl', 'openssl', 'mbstring', 'iconv', 'fileinfo'] as $ext) {
     echo "ext $ext: " . (extension_loaded($ext) ? 'yes' : 'NO') . "\n";
