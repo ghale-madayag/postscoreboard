@@ -36,6 +36,9 @@ return [
         // the filter.
         'approved_senders_path' => '/wp-json/user/contributor/',
 
+        // Additional allowed sender addresses on top of the API list.
+        'extra_approved_senders' => [],
+
         'timeout_seconds' => 60,
     ],
 

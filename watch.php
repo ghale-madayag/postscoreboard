@@ -376,6 +376,12 @@ function fetch_approved_senders(array $config): ?array
         log_line('ERROR', 'Approved-senders list came back empty - treating as an error.');
         return null;
     }
+    foreach ((array) ($wp['extra_approved_senders'] ?? []) as $extra) {
+        $extra = mb_strtolower(trim((string) $extra));
+        if ($extra !== '' && !in_array($extra, $emails, true)) {
+            $emails[] = $extra;
+        }
+    }
     return $emails;
 }
 
