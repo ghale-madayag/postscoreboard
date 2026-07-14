@@ -23,6 +23,34 @@ if (PHP_SAPI !== 'cli') {
     exit('Forbidden');
 }
 
+// --- Boot guard -------------------------------------------------------------
+// Runs before anything that can fail (autoload, config) so that a dead-on-
+// arrival cron run still leaves evidence in logs/boot.log.
+if (!is_dir(__DIR__ . '/logs')) {
+    @mkdir(__DIR__ . '/logs', 0775, true);
+}
+ini_set('log_errors', '1');
+ini_set('error_log', __DIR__ . '/logs/boot.log');
+register_shutdown_function(function (): void {
+    $e = error_get_last();
+    if ($e !== null && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        @file_put_contents(__DIR__ . '/logs/boot.log', sprintf(
+            "[%s] FATAL: %s in %s:%d (PHP %s)\n",
+            date('Y-m-d H:i:s'), $e['message'], $e['file'], $e['line'], PHP_VERSION
+        ), FILE_APPEND);
+    }
+});
+if (PHP_VERSION_ID < 80200) {
+    $msg = sprintf(
+        "[%s] PHP %s is too old - this script needs PHP >= 8.2. Point the cron job at a newer php binary.\n",
+        date('Y-m-d H:i:s'), PHP_VERSION
+    );
+    @file_put_contents(__DIR__ . '/logs/boot.log', $msg, FILE_APPEND);
+    fwrite(STDERR, $msg);
+    exit(1);
+}
+// -----------------------------------------------------------------------------
+
 require __DIR__ . '/vendor/autoload.php';
 
 use Webklex\PHPIMAP\ClientManager;

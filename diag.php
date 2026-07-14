@@ -28,11 +28,13 @@ echo "config.php: present (this page loaded it)\n";
 echo "state/state.json: " . (is_file(__DIR__ . '/state/state.json') ? 'present' : 'missing') . "\n";
 echo "logs/: " . (is_dir(__DIR__ . '/logs') ? 'present' : 'missing (script has never run)') . "\n";
 
-$log = __DIR__ . '/logs/watcher.log';
-if (is_file($log)) {
-    echo "--- last 30 log lines ---\n";
-    echo implode('', array_slice(file($log), -30));
-    echo "--- end log ---\n";
+foreach (['watcher.log', 'boot.log'] as $name) {
+    $log = __DIR__ . '/logs/' . $name;
+    if (is_file($log)) {
+        echo "--- last 30 lines of $name ---\n";
+        echo implode('', array_slice(file($log), -30));
+        echo "--- end $name ---\n";
+    }
 }
 
 echo "\nCLI php candidates:\n";
@@ -41,6 +43,13 @@ $bins = [
     '/opt/cpanel/ea-php81/root/usr/bin/php', '/opt/cpanel/ea-php82/root/usr/bin/php',
     '/opt/cpanel/ea-php83/root/usr/bin/php', '/opt/cpanel/ea-php84/root/usr/bin/php',
 ];
+if (is_dir('/opt/alt')) {
+    foreach ((array) scandir('/opt/alt') as $entry) {
+        if (preg_match('/^php\d+$/', (string) $entry)) {
+            $bins[] = "/opt/alt/$entry/usr/bin/php";
+        }
+    }
+}
 foreach ($bins as $bin) {
     echo "  $bin: " . (is_file($bin) ? 'exists' : '-') . "\n";
 }
