@@ -729,7 +729,10 @@ foreach ($candidates as $uid => $headerMessage) {
 $cacheClearUrl = (string) ($config['cache_clear_url']
     ?? 'https://scoreboard.depthintranet.com/wp-json/custom/v1/clear-cache');
 if ($postedCount > 0 && $cacheClearUrl !== '' && !$dryRun) {
-    $res = http_request('POST', $cacheClearUrl, ['Accept: application/json'], null, null, 30);
+    // Shared secret expected by the endpoint's permission_callback, derived
+    // from the WP app password so it never has to be stored separately.
+    $cacheKey = substr(sha1('cache-clear:' . (string) $config['wordpress']['app_password']), 0, 20);
+    $res = http_request('POST', $cacheClearUrl, ['Accept: application/json', 'X-Cache-Key: ' . $cacheKey], null, null, 30);
     if ($res['code'] === 200) {
         log_line('INFO', 'WP Rocket cache cleared.');
     } else {
