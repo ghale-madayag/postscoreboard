@@ -630,6 +630,7 @@ if (count($candidates) > 0) {
 }
 
 $postedDates = []; // slug => date posted this run (cache-defense for rotation)
+$postedCount = 0;
 
 foreach ($candidates as $uid => $headerMessage) {
     $images = [];
@@ -704,6 +705,7 @@ foreach ($candidates as $uid => $headerMessage) {
         log_line('INFO', sprintf('uid %d: posted to %s (%d image(s), schedule_date %s).', $uid, $target, count($urls), $today));
 
         $postedDates[$target] = $today;
+        $postedCount++;
         record_processed($state, $uid);
 
         if (!empty($config['mark_processed_seen'])) {
@@ -719,6 +721,19 @@ foreach ($candidates as $uid => $headerMessage) {
         foreach ($images as $img) {
             @unlink($img['path']);
         }
+    }
+}
+
+// New posts sit behind WP Rocket's page cache until it is cleared (same
+// endpoint checkwinner uses). Non-fatal: the cache expires on its own.
+$cacheClearUrl = (string) ($config['cache_clear_url']
+    ?? 'https://scoreboard.depthintranet.com/wp-json/custom/v1/clear-cache');
+if ($postedCount > 0 && $cacheClearUrl !== '' && !$dryRun) {
+    $res = http_request('POST', $cacheClearUrl, ['Accept: application/json'], null, null, 30);
+    if ($res['code'] === 200) {
+        log_line('INFO', 'WP Rocket cache cleared.');
+    } else {
+        log_line('WARN', sprintf('Cache clear failed: HTTP %d %s %s', $res['code'], $res['error'], substr($res['body'], 0, 200)));
     }
 }
 

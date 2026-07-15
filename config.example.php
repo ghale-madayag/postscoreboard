@@ -42,6 +42,10 @@ return [
         'timeout_seconds' => 60,
     ],
 
+    // Cleared after each run that created posts, so they show up immediately.
+    // Empty string disables.
+    'cache_clear_url' => 'https://scoreboard.depthintranet.com/wp-json/custom/v1/clear-cache',
+
     // Images larger than this are skipped (the email still posts without them).
     'max_image_bytes' => 10 * 1024 * 1024,
 
