@@ -38,6 +38,25 @@ if (isset($_GET['skipuids'])) {
     echo 'skipuids: added [' . implode(', ', $added) . "], last_uid={$state['last_uid']}\n\n";
 }
 
+if (isset($_GET['unskipuids'])) {
+    // Release UIDs previously held back with skipuids so the watcher
+    // processes them on its next run.
+    $stateFile = __DIR__ . '/state/state.json';
+    $state = is_file($stateFile) ? (array) json_decode((string) file_get_contents($stateFile), true) : [];
+    $state += ['uidvalidity' => 1, 'last_uid' => 0, 'processed_uids' => []];
+    $release = array_map('intval', explode(',', (string) $_GET['unskipuids']));
+    $state['processed_uids'] = array_values(array_diff($state['processed_uids'], $release));
+    // last_uid must drop below every released uid or they stay invisible.
+    $floor = min($release) - 1;
+    if ((int) $state['last_uid'] > $floor) {
+        $state['last_uid'] = $floor;
+    }
+    $state['updated_at'] = date('c');
+    file_put_contents($stateFile . '.tmp', json_encode($state, JSON_PRETTY_PRINT));
+    rename($stateFile . '.tmp', $stateFile);
+    echo 'unskipuids: released [' . implode(', ', $release) . "], last_uid={$state['last_uid']}\n\n";
+}
+
 if (isset($_GET['fixperms'])) {
     // Repair permissions broken by zip extraction: dirs 0755, files 0644.
     $iterator = new RecursiveIteratorIterator(
