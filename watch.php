@@ -196,13 +196,13 @@ function clean_body_text(string $text): string
             continue;
         }
         // Signature delimiters: exact-line greetings ("Best regards,"), the RFC
-        // "-- " separator, or "Sent from my ...". Never cut on the first content
-        // line, so a message like "Cheers!" or "Thanks Tim!" survives.
+        // "-- " separator, or "Sent from my ...". Cutting may empty the body
+        // entirely (photo-only emails) - the title then comes from the subject.
         $isDelimiter =
             preg_match('/^(best regards|kind regards|warm regards|regards|cheers|many thanks|thanks|thank you)[,!.]?$/i', $trimmed)
             || $trimmed === '--'
             || preg_match('/^sent from my /i', $trimmed);
-        if ($isDelimiter && count(array_filter($kept, 'strlen')) > 0) {
+        if ($isDelimiter) {
             break;
         }
         $kept[] = $trimmed;
@@ -273,6 +273,16 @@ function extract_images($message, int $uid, array $config): array
         if ($mime === null) {
             continue; // not an image we accept
         }
+        // Signature logos are images too - skip anything implausibly small
+        // for a photo.
+        $minBytes = (int) ($config['min_image_bytes'] ?? 30 * 1024);
+        if (strlen($content) < $minBytes) {
+            log_line('INFO', sprintf(
+                'uid %d: skipping small image "%s" (%.1f KB) - likely a signature logo.',
+                $uid, (string) $attachment->getName(), strlen($content) / 1024
+            ));
+            continue;
+        }
         if (strlen($content) > $maxBytes) {
             log_line('WARN', sprintf(
                 'uid %d: skipping oversized image "%s" (%.1f MB)',
@@ -293,6 +303,23 @@ function extract_images($message, int $uid, array $config): array
     }
 
     return $images;
+}
+
+/**
+ * Whatever the subject says beyond the match keyword, cleaned up as a
+ * headline: 'scoreboard - "Scott locked & loaded for MRF-D"' -> 'Scott
+ * locked & loaded for MRF-D'. Returns '' when the subject is only the
+ * keyword (plus Re:/Fwd: noise).
+ */
+function subject_extra_text(string $subject, string $needle): string
+{
+    $s = trim((string) preg_replace('/^\s*((re|fwd?)\s*:\s*)+/i', '', $subject));
+    $s = trim((string) preg_replace('/' . preg_quote($needle, '/') . '/i', '', $s, 1));
+    $s = trim((string) preg_replace('/^[\s\-–—:;,.]+|[\s\-–—:;,.]+$/u', '', $s));
+    if (preg_match('/^["\'\x{201C}\x{2018}](.*)["\'\x{201D}\x{2019}]$/su', $s, $m)) {
+        $s = trim($m[1]);
+    }
+    return $s;
 }
 
 function record_processed(array &$state, int $uid): void
@@ -650,7 +677,15 @@ foreach ($candidates as $uid => $headerMessage) {
         // Now fetch the full message (body + attachments) for this one email.
         $message = $folder->query()->leaveUnread()->getMessageByUid($uid);
         $body = extract_body_text($message);
-        [$title, $description] = split_title_description($body, $subject);
+        // Senders sometimes put the message in the subject itself
+        // ('scoreboard - "Scott locked & loaded..."') with a photo-only body.
+        $subjectExtra = subject_extra_text($subject, $needle);
+        if ($subjectExtra !== '') {
+            $title = $subjectExtra;
+            $description = $body;
+        } else {
+            [$title, $description] = split_title_description($body, $subject);
+        }
         $images = extract_images($message, $uid, $config);
 
         // A real scoreboard post always carries a photo. Emails that merely

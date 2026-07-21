@@ -49,6 +49,9 @@ return [
     // Images larger than this are skipped (the email still posts without them).
     'max_image_bytes' => 10 * 1024 * 1024,
 
+    // Images smaller than this are skipped (signature logos etc).
+    'min_image_bytes' => 30 * 1024,
+
     // If true, matched emails are marked read in Gmail after a successful post.
     'mark_processed_seen' => false,
 ];
