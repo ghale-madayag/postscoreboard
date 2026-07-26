@@ -246,6 +246,63 @@ function sniff_image_mime(string $bytes): ?string
 }
 
 /**
+ * Reads pixel dimensions from the file header (pure PHP - no ext-gd or
+ * ext-fileinfo on the host CLI). Returns [width, height] or null if the
+ * header cannot be parsed.
+ */
+function image_dimensions(string $bytes, string $mime): ?array
+{
+    switch ($mime) {
+        case 'image/png':
+            if (strlen($bytes) >= 24) {
+                $d = unpack('Nw/Nh', substr($bytes, 16, 8));
+                return [$d['w'], $d['h']];
+            }
+            return null;
+        case 'image/gif':
+            if (strlen($bytes) >= 10) {
+                $d = unpack('vw/vh', substr($bytes, 6, 4));
+                return [$d['w'], $d['h']];
+            }
+            return null;
+        case 'image/jpeg':
+            $len = strlen($bytes);
+            $pos = 2;
+            while ($pos + 9 < $len) {
+                if (ord($bytes[$pos]) !== 0xFF) {
+                    $pos++;
+                    continue;
+                }
+                $marker = ord($bytes[$pos + 1]);
+                if ($marker >= 0xC0 && $marker <= 0xCF && !in_array($marker, [0xC4, 0xC8, 0xCC], true)) {
+                    $d = unpack('nh/nw', substr($bytes, $pos + 5, 4));
+                    return [$d['w'], $d['h']];
+                }
+                $segLen = unpack('n', substr($bytes, $pos + 2, 2))[1];
+                $pos += 2 + $segLen;
+            }
+            return null;
+        case 'image/webp':
+            $fourcc = substr($bytes, 12, 4);
+            if ($fourcc === 'VP8X' && strlen($bytes) >= 30) {
+                $w = (unpack('V', substr($bytes, 24, 3) . "\x00")[1] & 0xFFFFFF) + 1;
+                $h = (unpack('V', substr($bytes, 27, 3) . "\x00")[1] & 0xFFFFFF) + 1;
+                return [$w, $h];
+            }
+            if ($fourcc === 'VP8 ' && strlen($bytes) >= 30) {
+                $d = unpack('vw/vh', substr($bytes, 26, 4));
+                return [$d['w'] & 0x3FFF, $d['h'] & 0x3FFF];
+            }
+            if ($fourcc === 'VP8L' && strlen($bytes) >= 25) {
+                $b = unpack('V', substr($bytes, 21, 4))[1];
+                return [($b & 0x3FFF) + 1, (($b >> 14) & 0x3FFF) + 1];
+            }
+            return null;
+    }
+    return null;
+}
+
+/**
  * Saves image attachments (regular and inline) to TMP_DIR.
  *
  * @return array<int, array{path:string,name:string,mime:string,size:int}>
@@ -274,12 +331,23 @@ function extract_images($message, int $uid, array $config): array
             continue; // not an image we accept
         }
         // Signature logos are images too - skip anything implausibly small
-        // for a photo.
+        // for a photo, by bytes AND by pixel dimensions (a logo PNG can be
+        // large in bytes but is never photo-sized in pixels).
         $minBytes = (int) ($config['min_image_bytes'] ?? 30 * 1024);
         if (strlen($content) < $minBytes) {
             log_line('INFO', sprintf(
                 'uid %d: skipping small image "%s" (%.1f KB) - likely a signature logo.',
                 $uid, (string) $attachment->getName(), strlen($content) / 1024
+            ));
+            continue;
+        }
+        $minW = (int) ($config['min_image_width'] ?? 500);
+        $minH = (int) ($config['min_image_height'] ?? 500);
+        $dims = image_dimensions($content, $mime);
+        if ($dims !== null && ($dims[0] < $minW || $dims[1] < $minH)) {
+            log_line('INFO', sprintf(
+                'uid %d: skipping image "%s" (%dx%d px) - too small for a photo, likely a logo.',
+                $uid, (string) $attachment->getName(), $dims[0], $dims[1]
             ));
             continue;
         }
@@ -628,7 +696,11 @@ foreach ($messages as $message) {
     try {
         $uid = (int) $message->getUid();
         $subject = trim((string) $message->getSubject());
-        if (mb_stripos($subject, $needle) === false) {
+        // The subject must START with the keyword (after Re:/Fwd: noise).
+        // A mere mention ("Proposal: Upgrading the TV Scoreboard") is
+        // conversation, not a post - that exact leak happened once.
+        $subjectNorm = trim((string) preg_replace('/^\s*((re|fwd?)\s*:\s*)+/i', '', $subject));
+        if (mb_stripos($subjectNorm, $needle) !== 0) {
             continue;
         }
         if ($uid <= (int) $state['last_uid'] || in_array($uid, $state['processed_uids'], true)) {

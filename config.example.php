@@ -52,6 +52,10 @@ return [
     // Images smaller than this are skipped (signature logos etc).
     'min_image_bytes' => 30 * 1024,
 
+    // Minimum pixel dimensions - anything smaller is a logo, not a photo.
+    'min_image_width'  => 500,
+    'min_image_height' => 500,
+
     // If true, matched emails are marked read in Gmail after a successful post.
     'mark_processed_seen' => false,
 ];
