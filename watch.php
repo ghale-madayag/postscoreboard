@@ -383,9 +383,18 @@ function subject_extra_text(string $subject, string $needle): string
 {
     $s = trim((string) preg_replace('/^\s*((re|fwd?)\s*:\s*)+/i', '', $subject));
     $s = trim((string) preg_replace('/' . preg_quote($needle, '/') . '/i', '', $s, 1));
+    // Drop a leading sequence number ("scoreboard 2 - Modifier..."), used to
+    // stop Gmail threading repeat sends.
+    $s = (string) preg_replace('/^[\s\-–—:;,.]*#?\d+/u', '', $s);
     $s = trim((string) preg_replace('/^[\s\-–—:;,.]+|[\s\-–—:;,.]+$/u', '', $s));
     if (preg_match('/^["\'\x{201C}\x{2018}](.*)["\'\x{201D}\x{2019}]$/su', $s, $m)) {
         $s = trim($m[1]);
+    }
+    // A leftover without any letters ("scoreboard 2" -> "2") is a sequence
+    // number to dodge Gmail threading, not a headline - the real message is
+    // in the body.
+    if (!preg_match('/\p{L}/u', $s)) {
+        return '';
     }
     return $s;
 }
